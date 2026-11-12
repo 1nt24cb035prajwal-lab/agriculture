@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+*.db
+uploads/
+__pycache__/
+backend/ml/artifacts/
+backend/data/*.csv
+.venv/
+backend/.venv/
