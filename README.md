@@ -33,7 +33,7 @@ http://localhost:8000. Optional: copy a farm photo to
 `frontend/public/field.jpg` for the background (a green gradient is used
 otherwise).
 
-In `APP_ENV=dev`, OTPs are **printed in the backend console** (no SMS needed to test). In production set `APP_ENV=prod` and the `TWILIO_*` variables.
+In `APP_ENV=dev`, new accounts can register and log in without phone OTP verification. Other OTPs are **printed in the backend console** (no SMS needed to test). In production set `APP_ENV=prod` and the `TWILIO_*` variables; phone verification is required during registration.
 
 ## 2. Train the disease model (target ≥ 95 %)
 
@@ -69,7 +69,7 @@ Admin login: the `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env`, then open **/app/
 
 ## 5. What is real, what is limited
 
-**Working (real logic):** registration with hashed OTP (expiry, attempt limit, resend throttle), login by phone/email, OTP login, forgot/reset password, Google sign-in (when configured), JWT sessions, login lockout, per-farmer data isolation, crop & land forms, full-screen map picker with reverse geocoding, live weather + alerts, FAO-56 water requirement, rule-based crop recommendation with explained scores, threat fusion engine, notifications, activity history, PDF reports, profile editing, admin panel, market prices & nearby markets, NDVI.
+**Working (real logic):** registration with password (production phone OTP has expiry, attempt limit, and resend throttle; skipped in development), login by phone/email, forgot/reset password, Google sign-in (when configured), JWT sessions, login lockout, per-farmer data isolation, crop & land forms, full-screen map picker with reverse geocoding, live weather + alerts, FAO-56 water requirement, rule-based crop recommendation with explained scores, threat fusion engine, notifications, activity history, PDF reports, profile editing, admin panel, market prices & nearby markets, NDVI.
 
 **Needs you to supply something:** trained disease model, yield dataset/model, API keys above. Until then those pages show a clear “not configured” message – no fake values are generated.
 

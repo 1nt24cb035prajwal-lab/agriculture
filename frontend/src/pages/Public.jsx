@@ -27,7 +27,7 @@ export function Landing() {
       <div className="container" style={{ padding: '50px 18px' }}>
         <section id="about"><h2>About Us</h2><p>Agriculture Threat Fusion combines your farm details, weather, satellite vegetation and AI to give decision-support estimates. It supports — it does not replace — advice from your local agriculture officer.</p></section>
         <section id="features"><h2>Features</h2><div className="grid g3">{FEATS.map(([i, t, d]) => <div key={t} className="card"><div style={{ fontSize: '2rem' }}>{i}</div><b>{t}</b><p className="mut">{d}</p></div>)}</div></section>
-        <section id="how"><h2>How it works</h2><div className="grid g4">{['Register with OTP', 'Add crop & pick farm on map', 'Get weather, water, NDVI & threat alerts', 'Detect disease, predict yield, find markets'].map((s, i) => <div key={s} className="card"><div className="big-n">{i + 1}</div>{s}</div>)}</div></section>
+        <section id="how"><h2>How it works</h2><div className="grid g4">{['Create an account', 'Add crop & pick farm on map', 'Get weather, water, NDVI & threat alerts', 'Detect disease, predict yield, find markets'].map((s, i) => <div key={s} className="card"><div className="big-n">{i + 1}</div>{s}</div>)}</div></section>
         <section id="contact"><h2>Contact</h2><p className="mut">Replace this with your support email / helpline.</p></section>
       </div></div>
   )
@@ -42,7 +42,7 @@ const Pw = ({ value, onChange, label = 'Password', ...p }) => {
 export function Auth() {
   const nav = useNavigate()
   const q = new URLSearchParams(location.search)
-  const [mode, setMode] = useState(q.get('mode') === 'register' ? 'register' : 'login') // login|register|otp|otplogin|forgot|reset|complete
+  const [mode, setMode] = useState(q.get('mode') === 'register' ? 'register' : 'login') // login|register|otp|forgot|reset|complete
   const [f, setF] = useState({ identifier: '', password: '', remember: true, name: '', phone: '', email: '', confirm: '', terms: false, code: '', newpw: '' })
   const [busy, setBusy] = useState(false); const [err, setErr] = useState(null); const [msg, setMsg] = useState(null)
   const [cd, setCd] = useState(0)
@@ -62,7 +62,8 @@ export function Auth() {
 
   const doRegister = () => run(async () => {
     if (!f.terms) throw new Error('Please accept the Terms and Conditions.')
-    await api('/auth/register', { method: 'POST', body: { name: f.name, phone: f.phone, email: f.email, password: f.password, confirm: f.confirm } })
+    const r = await api('/auth/register', { method: 'POST', body: { name: f.name, phone: f.phone, email: f.email, password: f.password, confirm: f.confirm } })
+    if (r.token) { done(r); return }
     setMode('otp'); setCd(30); setMsg('OTP sent to your mobile number.')
   })
   const doLogin = () => run(async () => done(await api('/auth/login', { method: 'POST', body: { identifier: f.identifier, password: f.password, remember: f.remember } })))
@@ -84,7 +85,6 @@ export function Auth() {
           <button className="btn" style={{ width: '100%', marginTop: 12 }} disabled={busy}>{busy ? 'Signing in…' : 'Login'}</button>
           <div className="mut" style={{ textAlign: 'center', margin: '12px 0' }}>or</div>
           {import.meta.env.VITE_GOOGLE_CLIENT_ID ? <div ref={gref} style={{ display: 'grid', placeItems: 'center' }} /> : <button type="button" className="btn alt" style={{ width: '100%' }} disabled title="Set VITE_GOOGLE_CLIENT_ID">Continue with Google (not configured)</button>}
-          <button type="button" className="btn alt" style={{ width: '100%', marginTop: 8 }} onClick={() => { setMode('otplogin'); setErr(null) }}>Login with OTP</button>
           <p style={{ textAlign: 'center' }}><a href="#" onClick={e => { e.preventDefault(); setMode('register') }}>Create New Account</a></p></form>}
 
         {mode === 'register' && <form onSubmit={e => { e.preventDefault(); doRegister() }}>
@@ -93,20 +93,13 @@ export function Auth() {
           <label>Email address</label><input type="email" value={f.email} onChange={e => set('email')(e.target.value)} required />
           <Pw value={f.password} onChange={set('password')} required /><Pw label="Confirm password" value={f.confirm} onChange={set('confirm')} required />
           <label style={{ display: 'flex', gap: 6 }}><input type="checkbox" style={{ width: 'auto' }} checked={f.terms} onChange={e => set('terms')(e.target.checked)} />I accept the Terms and Conditions</label>
-          <button className="btn" style={{ width: '100%', marginTop: 8 }} disabled={busy}>{busy ? 'Sending OTP…' : 'Register & send OTP'}</button></form>}
+          <button className="btn" style={{ width: '100%', marginTop: 8 }} disabled={busy}>{busy ? 'Creating account…' : 'Create account'}</button></form>}
 
         {mode === 'otp' && <form onSubmit={e => { e.preventDefault(); run(async () => done(await api('/auth/verify-otp', { method: 'POST', body: { phone: f.phone, code: f.code } }))) }}>
           <h3>Verify your mobile number</h3><p className="mut">Enter the 6-digit OTP sent to {f.phone}.</p>
           <input value={f.code} onChange={e => set('code')(e.target.value)} inputMode="numeric" maxLength={6} autoFocus required />
           <button className="btn" style={{ width: '100%', marginTop: 10 }} disabled={busy}>Verify & complete registration</button>
           <button type="button" className="btn alt" style={{ width: '100%', marginTop: 8 }} disabled={cd > 0 || busy} onClick={() => run(async () => { await api('/auth/resend-otp', { method: 'POST', body: { phone: f.phone } }); setCd(30); setMsg('New OTP sent.') })}>{cd > 0 ? `Resend OTP in ${cd}s` : 'Resend OTP'}</button></form>}
-
-        {mode === 'otplogin' && <div><h3>Login with OTP</h3>
-          <label>Registered mobile number</label><input value={f.phone} onChange={e => set('phone')(e.target.value)} inputMode="tel" />
-          <button className="btn alt" style={{ width: '100%', margin: '8px 0' }} disabled={busy || cd > 0} onClick={() => run(async () => { await api('/auth/login-otp/request', { method: 'POST', body: { phone: f.phone } }); setCd(30); setMsg('If this number is registered, an OTP has been sent.') })}>{cd > 0 ? `Resend in ${cd}s` : 'Send OTP'}</button>
-          <label>OTP</label><input value={f.code} onChange={e => set('code')(e.target.value)} inputMode="numeric" maxLength={6} />
-          <button className="btn" style={{ width: '100%', marginTop: 10 }} disabled={busy} onClick={() => run(async () => done(await api('/auth/login-otp/verify', { method: 'POST', body: { phone: f.phone, code: f.code } })))}>Login</button>
-          <p><a href="#" onClick={e => { e.preventDefault(); setMode('login') }}>← Back</a></p></div>}
 
         {mode === 'forgot' && <div><h3>Forgot password</h3><p className="mut">We will send an OTP to your registered mobile number.</p>
           <label>Phone number or Email</label><input value={f.identifier} onChange={e => set('identifier')(e.target.value)} />

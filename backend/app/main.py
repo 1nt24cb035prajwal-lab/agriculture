@@ -71,7 +71,7 @@ def farmer_dict(f: m.Farmer):
 
 def token_resp(f: m.Farmer, remember=True):
     return {"token": sec.make_token(f.id, 30 if remember else 1), "farmer": farmer_dict(f),
-            "needs_profile": not f.phone or not f.phone_verified}
+            "needs_profile": not f.phone}
 
 
 async def create_otp(db: Session, target: str, purpose: str):
@@ -134,14 +134,15 @@ async def register(b: RegisterIn, db: Session = Depends(get_db)):
     check_password(b.password)
     if b.password != b.confirm: raise HTTPException(422, "Passwords do not match.")
     ex = db.scalar(select(m.Farmer).where((m.Farmer.phone == phone) | (m.Farmer.email == email)))
-    if ex and ex.phone_verified: raise HTTPException(409, "Mobile number or email is already registered.")
-    if ex:  # unverified earlier attempt - let them retry
-        ex.name, ex.phone, ex.email, ex.password_hash = b.name.strip(), phone, email, sec.hash_pw(b.password)
-    else:
-        db.add(m.Farmer(farmer_code="F" + uuid.uuid4().hex[:8].upper(), name=b.name.strip(), phone=phone, email=email, password_hash=sec.hash_pw(b.password)))
+    if ex: raise HTTPException(409, "Mobile number or email is already registered.")
+    f = m.Farmer(farmer_code="F" + uuid.uuid4().hex[:8].upper(), name=b.name.strip(), phone=phone,
+                 email=email, password_hash=sec.hash_pw(b.password))
+    db.add(f)
     db.commit()
-    await create_otp(db, phone, "register")
-    return {"ok": True, "message": "OTP sent to your mobile number.", "phone": phone}
+    if os.getenv("APP_ENV", "dev") != "dev":
+        await create_otp(db, phone, "register")
+        return {"ok": True, "message": "OTP sent to your mobile number.", "phone": phone}
+    return token_resp(f)
 
 
 class OtpIn(BaseModel):
@@ -173,7 +174,8 @@ async def login(b: LoginIn, db: Session = Depends(get_db)):
     if not f or not sec.check_pw(b.password, f.password_hash):
         sec.lock_fail(key); raise HTTPException(401, "Incorrect phone/email or password.")
     if not f.is_active: raise HTTPException(403, "This account has been disabled.")
-    if f.role == "farmer" and not f.phone_verified: raise HTTPException(403, "Mobile number not verified. Register again to receive a new OTP.")
+    if f.role == "farmer" and not f.phone_verified and os.getenv("APP_ENV", "dev") != "dev":
+        raise HTTPException(403, "Mobile number not verified. Register again to receive a new OTP.")
     sec.lock_clear(key); return token_resp(f, b.remember)
 
 
