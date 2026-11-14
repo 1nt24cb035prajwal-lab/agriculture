@@ -1,4 +1,4 @@
-"""PlantVillage disease inference using the trained HOG + SGD classifier."""
+"""Plant disease inference using the trained HOG + SGD classifier."""
 import io
 import json
 import os
@@ -30,7 +30,7 @@ def _load():
         import joblib
 
         bundle = joblib.load(ART / "disease_model.joblib")
-        if bundle.get("kind") != "plantvillage_hog_v1":
+        if bundle.get("kind") not in {"plantvillage_hog_v1", "plantvillage_plantdoc_hog_v1"}:
             raise ValueError("Disease model artifact has an unsupported format.")
         _model = bundle["classifier"]
         _classes = json.loads((ART / "classes.json").read_text(encoding="utf-8"))

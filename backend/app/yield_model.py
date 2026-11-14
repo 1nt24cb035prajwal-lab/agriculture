@@ -39,6 +39,8 @@ def predict(farm: dict, crop_days: int | None):
     crop = ALIAS.get((farm["crop"] or "").strip().lower(), (farm["crop"] or "").strip().lower())
     state = (farm.get("state") or "").strip().upper()
     district = (farm.get("district") or "").strip().upper()
+    if district not in b.get("districts", [district]):
+        district = "OTHER"
     season = SEASON.get((farm.get("season") or "").strip().lower(), "Whole Year")
     ha = farm["area"] * (0.404686 if (farm.get("unit") or "acres") == "acres" else 1)
     if crop not in b["crops"]:

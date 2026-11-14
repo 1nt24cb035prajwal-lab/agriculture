@@ -37,7 +37,7 @@ In `APP_ENV=dev`, new accounts can register and log in without phone OTP verific
 
 ## 2. Train and test the disease model
 
-Use the PlantVillage RGB dataset's published, leaf-grouped split in this layout:
+PlantVillage contains 14 crop species and 38 crop/disease classes; it is not limited to three crops. Use its published, leaf-grouped split in this layout:
 
 ```text
 backend/data/plant_disease/
@@ -51,7 +51,13 @@ Then run:
 python backend/ml/train_disease.py --data backend/data/plant_disease
 ```
 
-The CPU-friendly HOG + logistic classifier evaluates only on the supplied test split and writes the model, class list, confusion matrix, and test metrics to `backend/ml/artifacts/`. PlantVillage is controlled-image research data, so its score is not field-photo accuracy or a confirmed diagnosis. The model artifact is derived from PlantVillage by Mohanty, Hughes, and Salathé (2016; DOI [10.3389/fpls.2016.01419](https://doi.org/10.3389/fpls.2016.01419)) and distributed under the dataset's declared [CC BY-SA 3.0 license](https://creativecommons.org/licenses/by-sa/3.0/). Keep attribution and share-alike terms with the model.
+For an additional field-photo dataset, download [PlantDoc](https://github.com/pratikkayal/PlantDoc-Dataset) (the published mirror has 2,578 images from 13 species; [Hugging Face mirror and split](https://huggingface.co/datasets/agyaatcoder/PlantDoc)). Extract its `train/` and `test/` class folders, then train on both:
+
+```bash
+python backend/ml/train_disease.py --data backend/data/plant_disease --plantdoc-data path/to/PlantDoc
+```
+
+The trainer maps PlantDoc's 28 folder labels to the matching PlantVillage crop/disease labels and gives the two training datasets equal aggregate sample weight. It evaluates the resulting classifier separately on each dataset's published test split. In the local run (45,938 training images), the combined classifier scored 60.99% accuracy / 0.5094 macro-F1 on 10,709 PlantVillage test images and 13.56% / 0.1046 macro-F1 on 236 PlantDoc test images (27 classes). A PlantDoc-only training experiment scored 16.10% / 0.1275 on that same PlantDoc split. These low field-photo results do not support claiming reliable field detection; keep the combined candidate separate from the checked-in PlantVillage model using `--output path/to/artifacts` until field performance is improved and independently validated. PlantVillage is controlled-image research data; neither test score is field diagnostic accuracy or a confirmed diagnosis. PlantVillage declares [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/); PlantDoc declares [CC BY 4.0](https://github.com/pratikkayal/PlantDoc-Dataset/blob/main/LICENSE.txt). Verify the combined model's redistribution terms before publishing the trained bundle, and retain required attribution.
 
 ## 3. Train the crop recommendation model
 
@@ -65,11 +71,11 @@ The benchmark CSV used for the local training run is the [Crop Recommendation da
 
 ## 4. Train the yield model
 
-Download a real crop-production CSV (e.g. Kaggle “Crop Production in India”, columns `State_Name, District_Name, Crop_Year, Season, Crop, Area, Production`) into `backend/data/`, then:
+Download the [Crop Production in India dataset](https://www.kaggle.com/datasets/abhinand05/crop-production-in-india) (columns `State_Name, District_Name, Crop_Year, Season, Crop, Area, Production`) into `backend/data/`, then:
 ```bash
-python ml/train_yield.py --csv data/crop_production.csv
+python backend/ml/train_yield.py --csv backend/data/crop_production.csv
 ```
-It reports hold-out R²/MAE (shown in the UI). Regional averages come from the same dataset.
+It holds out the latest complete years for testing, reports R²/MAE/RMSE, and refits the serving model on valid historical rows. The local training run (1997–2010 train, 2011–2014 test) scored R² 0.876, MAE 1.11 t/ha, and RMSE 3.536 t/ha. Districts outside the 254 most common training districts use an `OTHER` category. The dataset mirror's redistribution license is unverified, so the CSV and trained model remain local; do not publish them without reviewing the original dataset terms.
 
 ## 5. API keys (all optional – each feature explains itself if missing)
 
@@ -87,7 +93,7 @@ Admin login: the `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env`, then open **/app/
 
 **Working (real logic):** registration with password (production phone OTP has expiry, attempt limit, and resend throttle; skipped in development), login by phone/email, forgot/reset password, Google sign-in (when configured), JWT sessions, login lockout, per-farmer data isolation, crop & land forms, full-screen map picker with reverse geocoding, live weather + alerts, FAO-56 water requirement, rule-based crop recommendation with explained scores, threat fusion engine, notifications, activity history, PDF reports, profile editing, admin panel, market prices & nearby markets, NDVI.
 
-**Needs you to supply something:** a yield dataset/model and any API keys above. The PlantVillage disease model is included; the optional crop recommendation model can be trained locally from an appropriately licensed CSV. Unconfigured features show a clear message – no fake values are generated.
+**Needs you to supply something:** a yield dataset/model and any API keys above. The PlantVillage disease model is included; optional crop recommendation and yield models can be trained locally. Unconfigured features show a clear message – no fake values are generated.
 
 **Known limits (be aware):**
 - Crop recommendations include transparent agronomic-range scores; optional dataset-based crop suitability scores require soil N/P/K test values and a locally trained model. Neither is field-validated.
