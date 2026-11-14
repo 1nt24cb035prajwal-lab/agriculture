@@ -1,5 +1,7 @@
-"""Disease inference. Needs ml/artifacts/disease_model.keras + classes.json (created by ml/train_disease.py)."""
-import io, os, json
+"""PlantVillage disease inference using the trained HOG + SGD classifier."""
+import io
+import json
+import os
 from pathlib import Path
 
 ART = Path(__file__).resolve().parent.parent / "ml" / "artifacts"
@@ -12,7 +14,7 @@ class ModelNotReady(Exception):
 
 
 def ready():
-    return (ART / "disease_model.keras").exists() and (ART / "classes.json").exists()
+    return (ART / "disease_model.joblib").exists() and (ART / "classes.json").exists()
 
 
 def model_info():
@@ -25,10 +27,61 @@ def _load():
     if _model is None:
         if not ready():
             raise ModelNotReady("Disease model is not trained yet. Run backend/ml/train_disease.py (see README).")
-        import tensorflow as tf
-        _model = tf.keras.models.load_model(ART / "disease_model.keras")
-        _classes = json.loads((ART / "classes.json").read_text())
+        import joblib
+
+        bundle = joblib.load(ART / "disease_model.joblib")
+        if bundle.get("kind") != "plantvillage_hog_v1":
+            raise ValueError("Disease model artifact has an unsupported format.")
+        _model = bundle["classifier"]
+        _classes = json.loads((ART / "classes.json").read_text(encoding="utf-8"))
+        if list(_model.classes_) != _classes:
+            raise ValueError("Disease model classes do not match classes.json.")
     return _model, _classes
+
+
+def extract_features(image):
+    import numpy as np
+    from PIL import Image
+
+    image_size, cell_size, bins = 32, 8, 9
+    rgb_image = image.convert("RGB").resize((image_size, image_size), Image.Resampling.BILINEAR)
+    rgb = np.asarray(rgb_image, dtype=np.float32)
+    gray = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    gradient_y, gradient_x = np.gradient(gray)
+    magnitude = np.hypot(gradient_x, gradient_y)
+    orientation = np.mod(np.arctan2(gradient_y, gradient_x), np.pi) * (bins / np.pi)
+    lower_bin = np.floor(orientation).astype(np.int32) % bins
+    bin_fraction = orientation - np.floor(orientation)
+    cell_rows, cell_columns = np.indices((image_size, image_size))
+    cell_count = image_size // cell_size
+    cell_ids = ((cell_rows // cell_size) * cell_count + cell_columns // cell_size).ravel()
+    magnitude = magnitude.ravel()
+    lower_bin = lower_bin.ravel()
+    bin_fraction = bin_fraction.ravel()
+    cell_total = cell_count * cell_count
+    cell_histograms = np.zeros((cell_total, bins), dtype=np.float32)
+    for bin_index in range(bins):
+        lower_weights = magnitude * (1 - bin_fraction) * (lower_bin == bin_index)
+        upper_weights = magnitude * bin_fraction * (((lower_bin + 1) % bins) == bin_index)
+        cell_histograms[:, bin_index] = (
+            np.bincount(cell_ids, weights=lower_weights, minlength=cell_total)
+            + np.bincount(cell_ids, weights=upper_weights, minlength=cell_total)
+        )
+    cell_histograms = cell_histograms.reshape(cell_count, cell_count, bins)
+    cell_histograms /= np.maximum(np.linalg.norm(cell_histograms, axis=2, keepdims=True), 1e-6)
+
+    color_histograms = []
+    hsv = np.asarray(rgb_image.convert("HSV"), dtype=np.uint8)
+    for channel in range(3):
+        color_histograms.extend(
+            np.histogram(rgb[:, :, channel], bins=16, range=(0, 256))[0].astype(np.float32)
+            / (image_size * image_size)
+        )
+        color_histograms.extend(
+            np.histogram(hsv[:, :, channel], bins=16, range=(0, 256))[0].astype(np.float32)
+            / (image_size * image_size)
+        )
+    return np.concatenate([cell_histograms.ravel(), color_histograms]).astype(np.float32)
 
 
 def _split(label):
@@ -69,8 +122,9 @@ def predict(image_bytes: bytes, selected_crop: str | None = None):
     import numpy as np
     from PIL import Image
     model, classes = _load()
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize((224, 224))
-    probs = model.predict(np.expand_dims(np.asarray(img, dtype="float32"), 0), verbose=0)[0]
+    with Image.open(io.BytesIO(image_bytes)) as source:
+        features = extract_features(source).reshape(1, -1)
+    probs = model.predict_proba(features)[0]
     top = probs.argsort()[::-1][:3]
     preds = [{"label": classes[i], "confidence": float(probs[i])} for i in top]
     crop, disease, healthy = _split(preds[0]["label"])

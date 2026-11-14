@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from .db import Base, engine, get_db, SessionLocal
-from . import models as m, security as sec, services as svc, sms, ml_infer, yield_model
+from . import models as m, security as sec, services as svc, sms, ml_infer, crop_model, yield_model
 from .crops_data import CROPS, STAGES, find_crop
 
 UPLOADS = Path(os.getenv("UPLOAD_DIR", "uploads")); UPLOADS.mkdir(exist_ok=True)
@@ -302,7 +302,8 @@ def config(_: m.Farmer = Depends(sec.current_user)):
     return {"supplier_url": e("SUPPLIER_URL", "https://share.google/tCbEJZtVxZKIURC8C"),
             "integrations": {"sms": bool(e("TWILIO_ACCOUNT_SID")), "google_login": bool(e("GOOGLE_CLIENT_ID")),
                              "market_prices": bool(e("DATA_GOV_API_KEY")), "satellite": bool(e("SENTINELHUB_CLIENT_ID")),
-                             "disease_model": ml_infer.ready(), "yield_model": yield_model.ready(), "weather": True, "maps": True}}
+                             "disease_model": ml_infer.ready(), "crop_model": crop_model.ready(),
+                             "yield_model": yield_model.ready(), "weather": True, "maps": True}}
 
 
 @app.get("/api/geo/reverse")
@@ -409,13 +410,47 @@ async def dashboard(fid: int, u: m.Farmer = Depends(sec.current_user), db: Sessi
 
 # ============================================================ recommendation
 class RecIn(BaseModel):
-    lat: float; lon: float; soil: str | None = None; ph: float | None = None; state: str | None = None; district: str | None = None
+    lat: float
+    lon: float
+    soil: str | None = None
+    ph: float | None = None
+    nitrogen: float | None = None
+    phosphorus: float | None = None
+    potassium: float | None = None
+    state: str | None = None
+    district: str | None = None
 
 
 @app.post("/api/recommend")
 async def recommend(b: RecIn, u: m.Farmer = Depends(sec.current_user), db: Session = Depends(get_db)):
     clim = await svc.climate_history(b.lat, b.lon); r = svc.recommend_crops(clim, b.soil, b.ph)
+    trained_model = {
+        "ready": crop_model.ready(),
+        "metrics": crop_model.info(),
+        "results": [],
+        "message": "Enter soil nitrogen, phosphorus, and potassium test values to run the trained model.",
+    }
+    if all(value is not None for value in (b.nitrogen, b.phosphorus, b.potassium)):
+        if not crop_model.ready():
+            trained_model["message"] = "The crop model is not trained. See README → Train the crop model."
+        else:
+            try:
+                weather = await svc.get_weather(b.lat, b.lon)
+            except httpx.HTTPError:
+                trained_model["message"] = "Current humidity is unavailable, so the trained model could not run. Try again later."
+            else:
+                trained_model.update(await run_in_threadpool(
+                    crop_model.predict,
+                    b.nitrogen,
+                    b.phosphorus,
+                    b.potassium,
+                    clim["recent_mean_temp_c"],
+                    weather["current"]["humidity"],
+                    b.ph,
+                    clim["annual_rain_mm"],
+                ))
     r["climate"] = clim; r["location"] = {"lat": b.lat, "lon": b.lon, "state": b.state, "district": b.district}
+    r["trained_model"] = trained_model
     save_record(db, u, "recommendation", f"Crop recommendation ({b.district or b.state or 'selected location'})", r); return r
 
 

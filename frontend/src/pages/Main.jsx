@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet'
 import L from 'leaflet'
@@ -17,14 +17,27 @@ const Fly = ({ pos }) => { const m = useMap(); useEffect(() => { if (pos) m.flyT
 
 // Full-screen map page: search, click/tap, GPS (only on user click), reverse-geocode, manual correction, confirm.
 export function MapPicker({ initial, onConfirm, onCancel }) {
-  const [pos, setPos] = useState(initial?.lat ? [initial.lat, initial.lon] : null)
+  const [pos, setPos] = useState(initial?.lat != null && initial?.lon != null ? [initial.lat, initial.lon] : null)
   const [loc, setLoc] = useState({ state: initial?.state || '', district: initial?.district || '', taluk: initial?.taluk || '', village: initial?.village || '' })
   const [q, setQ] = useState(''); const [hits, setHits] = useState([]); const [busy, setBusy] = useState(false); const [err, setErr] = useState(null); const [note, setNote] = useState('')
+  const geocodeRequest = useRef(0)
   const pick = async (lat, lon) => {
+    const request = ++geocodeRequest.current
     setPos([lat, lon]); setBusy(true); setErr(null); setNote('')
-    try { const r = await api(`/geo/reverse?lat=${lat}&lon=${lon}`); setLoc({ state: r.state || '', district: r.district || '', taluk: r.taluk || '', village: r.village || '' }); setNote(r.note) }
-    catch (e) { setErr(e); setNote('Could not auto-detect the place. Please type State/District/Taluk/Village yourself.') }
-    setBusy(false)
+    try {
+      const r = await api(`/geo/reverse?lat=${lat}&lon=${lon}`)
+      if (request === geocodeRequest.current) {
+        setLoc({ state: r.state || '', district: r.district || '', taluk: r.taluk || '', village: r.village || '' })
+        setNote(r.note)
+      }
+    } catch (e) {
+      if (request === geocodeRequest.current) {
+        setErr(e)
+        setNote('Could not auto-detect the place. Please type State/District/Taluk/Village yourself.')
+      }
+    } finally {
+      if (request === geocodeRequest.current) setBusy(false)
+    }
   }
   const search = async () => { setErr(null); try { setHits(await api('/geo/search?q=' + encodeURIComponent(q))) } catch (e) { setErr(e) } }
   const gps = () => navigator.geolocation ? navigator.geolocation.getCurrentPosition(p => pick(p.coords.latitude, p.coords.longitude), () => setErr(new Error('Location permission denied. Search or tap the map instead.'))) : setErr(new Error('GPS not available.'))
@@ -181,10 +194,19 @@ export function Recommend() {
   const nav = useNavigate()
   const [map, setMap] = useState(false); const [loc, setLoc] = useState(null)
   const [soil, setSoil] = useState(''); const [ph, setPh] = useState('')
+  const [npk, setNpk] = useState({ nitrogen: '', phosphorus: '', potassium: '' })
   const [busy, setBusy] = useState(false); const [err, setErr] = useState(null); const [r, setR] = useState(null); const [sel, setSel] = useState([]); const [det, setDet] = useState(null)
   const go = async l => {
     setBusy(true); setErr(null); setR(null)
-    try { setR(await api('/recommend', { method: 'POST', body: { lat: l.lat, lon: l.lon, soil: soil || null, ph: ph ? +ph : null, state: l.state, district: l.district } })) } catch (e) { setErr(e) }
+    try {
+      setR(await api('/recommend', { method: 'POST', body: {
+        lat: l.lat, lon: l.lon, soil: soil || null, ph: ph ? +ph : null,
+        nitrogen: npk.nitrogen === '' ? null : +npk.nitrogen,
+        phosphorus: npk.phosphorus === '' ? null : +npk.phosphorus,
+        potassium: npk.potassium === '' ? null : +npk.potassium,
+        state: l.state, district: l.district,
+      } }))
+    } catch (e) { setErr(e) }
     setBusy(false)
   }
   const add = async c => {
@@ -205,12 +227,25 @@ export function Recommend() {
         <details style={{ textAlign: 'left', marginTop: 14 }}><summary style={{ cursor: 'pointer' }}>Optional: add soil information for a better score</summary>
           <div className="row"><Field label="Soil type"><select value={soil} onChange={e => setSoil(e.target.value)}><option value="">Unknown</option>{SOILS.map(x => <option key={x}>{x}</option>)}</select></Field>
             <Field label="Soil pH"><input type="number" step="0.1" value={ph} onChange={e => setPh(e.target.value)} /></Field></div>
+          <div className="row">{[['nitrogen', 'Nitrogen (N)'], ['phosphorus', 'Phosphorus (P)'], ['potassium', 'Potassium (K)']].map(([key, label]) =>
+            <Field key={key} label={label}><input type="number" min="0" step="any" value={npk[key]} onChange={e => setNpk({ ...npk, [key]: e.target.value })} /></Field>)}</div>
+          <div className="mut">Enter soil-test N/P/K values to use the trained crop model; avoid entering fertilizer application rates.</div>
           {loc && <button className="btn alt" onClick={() => go(loc)}>Re-run with this soil info</button>}</details>
       </div>
       <Err e={err} />{busy && <Spinner text="Fetching 12-month climate and scoring crops…" />}
       {r && <>
         <div className="card" style={{ margin: '14px 0' }}><b>Climate used:</b> last-12-month rainfall ≈ {r.climate.annual_rain_mm} mm, recent mean temperature {r.climate.recent_mean_temp_c} °C <span className="mut">({r.climate.source})</span>
           {r.data_missing.map((x, i) => <div key={i} className="mut">ℹ️ {x}</div>)}<div className="mut">{r.disclaimer}</div></div>
+        {r.trained_model && <div className="card" style={{ marginBottom: 14 }}>
+          <h3>Trained crop model</h3>
+          {r.trained_model.metrics && <div className="mut">Held-out test accuracy: {Math.round(r.trained_model.metrics.test_accuracy * 100)}% · {r.trained_model.metrics.rows.toLocaleString()} training-dataset rows</div>}
+          {r.trained_model.results?.length
+            ? <><div className="grid g3" style={{ marginTop: 10 }}>{r.trained_model.results.map(item =>
+              <div className="card" key={item.crop}><b>{item.crop}</b><div className="mut">{Math.round(item.confidence * 100)}% model score</div></div>)}</div>
+              {r.trained_model.input_notes?.map((message, index) => <div className="mut" key={index}>{message}</div>)}
+              <div className="mut">{r.trained_model.disclaimer}</div></>
+            : <div className="mut">{r.trained_model.message}</div>}
+        </div>}
         {r.results.length === 0 ? <Empty>No crop in the reference table scored well for this location with the data available.</Empty> :
           <div className="grid g3">{r.results.map(c => <div key={c.crop} className="card">
             <div className="row" style={{ justifyContent: 'space-between' }}><h3>{c.crop}</h3><span className="big-n">{c.score}%</span></div>

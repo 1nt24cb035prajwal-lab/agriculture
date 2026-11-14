@@ -35,19 +35,35 @@ otherwise).
 
 In `APP_ENV=dev`, new accounts can register and log in without phone OTP verification. Other OTPs are **printed in the backend console** (no SMS needed to test). In production set `APP_ENV=prod` and the `TWILIO_*` variables; phone verification is required during registration.
 
-## 2. Train the disease model (target ≥ 95 %)
+## 2. Train and test the disease model
+
+Use the PlantVillage RGB dataset's published, leaf-grouped split in this layout:
+
+```text
+backend/data/plant_disease/
+  train/<Crop___Disease>/*.jpg
+  test/<Crop___Disease>/*.jpg
+```
+
+Then run:
 
 ```bash
-pip install -r backend/requirements-ml.txt
-pip install kaggle        # then put your kaggle.json in ~/.kaggle
-kaggle datasets download -d abdallahalidev/plantvillage-dataset -p data --unzip
-cd backend
-python ml/train_disease.py --data data/plantvillage\ dataset/color --epochs 8 --finetune 8
+python backend/ml/train_disease.py --data backend/data/plant_disease
 ```
-Use a GPU (Google Colab / Kaggle notebook) – CPU training takes hours. The script uses MobileNetV2 transfer learning, a 70/15/15 train/val/test split, prints **test accuracy** and writes `ml/artifacts/metrics.json`. It says whether the 95 % target was reached – **the number is only known after you run it**; PlantVillage normally gives 95–99 %.
-⚠ Honest caveat: PlantVillage is lab-style imagery with near-duplicate photos, so test accuracy overstates real-field accuracy. The app therefore rejects low-confidence results (`DISEASE_MIN_CONFIDENCE`, default 0.80) instead of guessing.
 
-## 3. Train the yield model
+The CPU-friendly HOG + logistic classifier evaluates only on the supplied test split and writes the model, class list, confusion matrix, and test metrics to `backend/ml/artifacts/`. PlantVillage is controlled-image research data, so its score is not field-photo accuracy or a confirmed diagnosis. The model artifact is derived from PlantVillage by Mohanty, Hughes, and Salathé (2016; DOI [10.3389/fpls.2016.01419](https://doi.org/10.3389/fpls.2016.01419)) and distributed under the dataset's declared [CC BY-SA 3.0 license](https://creativecommons.org/licenses/by-sa/3.0/). Keep attribution and share-alike terms with the model.
+
+## 3. Train the crop recommendation model
+
+Provide a crop recommendation CSV with columns `N,P,K,temperature,humidity,ph,rainfall,label` at `backend/data/crop_recommendation.csv`, then run:
+
+```bash
+python backend/ml/train_crop.py --csv backend/data/crop_recommendation.csv
+```
+
+The benchmark CSV used for the local training run is the [Crop Recommendation dataset](https://huggingface.co/datasets/liaad/agricultural-data), mirrored from Kaggle. Its redistribution terms have not been verified, so the CSV and resulting crop model remain local and are excluded from Git. Use only a dataset whose license permits model training and distribution. The script reports stratified 80/20 held-out accuracy and macro-F1, then saves the model under `backend/ml/artifacts/`. The recommender uses it only when soil N/P/K test values are entered; temperature and rainfall come from the selected location's climate data, and humidity comes from Open-Meteo. The app retains the separate, explainable agronomic-range scores as well.
+
+## 4. Train the yield model
 
 Download a real crop-production CSV (e.g. Kaggle “Crop Production in India”, columns `State_Name, District_Name, Crop_Year, Season, Crop, Area, Production`) into `backend/data/`, then:
 ```bash
@@ -55,7 +71,7 @@ python ml/train_yield.py --csv data/crop_production.csv
 ```
 It reports hold-out R²/MAE (shown in the UI). Regional averages come from the same dataset.
 
-## 4. API keys (all optional – each feature explains itself if missing)
+## 5. API keys (all optional – each feature explains itself if missing)
 
 | Feature | Variable | Where |
 |---|---|---|
@@ -67,14 +83,14 @@ It reports hold-out R²/MAE (shown in the UI). Regional averages come from the s
 
 Admin login: the `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env`, then open **/app/admin**.
 
-## 5. What is real, what is limited
+## 6. What is real, what is limited
 
 **Working (real logic):** registration with password (production phone OTP has expiry, attempt limit, and resend throttle; skipped in development), login by phone/email, forgot/reset password, Google sign-in (when configured), JWT sessions, login lockout, per-farmer data isolation, crop & land forms, full-screen map picker with reverse geocoding, live weather + alerts, FAO-56 water requirement, rule-based crop recommendation with explained scores, threat fusion engine, notifications, activity history, PDF reports, profile editing, admin panel, market prices & nearby markets, NDVI.
 
-**Needs you to supply something:** trained disease model, yield dataset/model, API keys above. Until then those pages show a clear “not configured” message – no fake values are generated.
+**Needs you to supply something:** a yield dataset/model and any API keys above. The PlantVillage disease model is included; the optional crop recommendation model can be trained locally from an appropriately licensed CSV. Unconfigured features show a clear message – no fake values are generated.
 
 **Known limits (be aware):**
-- Crop recommendation uses a generic agronomic reference table (`app/crops_data.py`) + 12-month climate – not a trained ML model, no soil database, no satellite input. Edit the table to match your region.
+- Crop recommendations include transparent agronomic-range scores; optional dataset-based crop suitability scores require soil N/P/K test values and a locally trained model. Neither is field-validated.
 - Disease severity is *not* estimated (classifier only gives type + confidence). Treatment text is generic, with no dosages, and always defers to KVK/agri officer.
 - Yield model uses historical district data (state/district/crop/season/area/year); this season’s weather/NDVI/disease are shown as qualitative factors only.
 - Nearby “markets” come from OpenStreetMap, not an official mandi register. Agmarknet prices are the latest published, not tick-live.

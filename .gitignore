@@ -5,6 +5,12 @@ dist/
 uploads/
 __pycache__/
 backend/ml/artifacts/
+!backend/ml/artifacts/
+backend/ml/artifacts/*
+!backend/ml/artifacts/disease_model.joblib
+!backend/ml/artifacts/classes.json
+!backend/ml/artifacts/metrics.json
+!backend/ml/artifacts/confusion_matrix.csv
 backend/data/*.csv
 .venv/
 backend/.venv/
